@@ -4,7 +4,6 @@ import com.holdmylua.source.LuaTestHMI;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GameRenderer;
-import org.lwjgl.glfw.GLFW;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -17,7 +16,7 @@ public class GameRendererMixin {
       at = {@At("HEAD")}
    )
    private void deltaTime(DeltaTracker tickCounter, boolean tick, CallbackInfo ci) {
-      float currentTime = (float)GLFW.glfwGetTime();
+      float currentTime = System.nanoTime() / 1_000_000_000.0f;
       LuaTestHMI.deltaTime = currentTime - LuaTestHMI.prevTime;
       LuaTestHMI.prevTime = currentTime;
       if (Minecraft.getInstance().isPaused()) {
