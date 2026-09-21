@@ -87,7 +87,7 @@ public abstract class BlockRenderManagerMixin implements AlternateBlockRenderer 
          b = 1.0F;
       }
 
-      RenderType usedLayer = bakedQuad.materialInfo().shade() && blockState.getLightEmission() == 0
+      RenderType usedLayer = bakedQuad.materialInfo().shadeDirectionOverride() == null && blockState.getLightEmission() == 0
          ? Sheets.translucentBlockItemSheet()
          : RenderTypes.cutoutMovingBlock();
       int color = ARGB.colorFromFloat(1.0F, r, g, b);

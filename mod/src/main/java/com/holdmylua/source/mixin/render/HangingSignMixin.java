@@ -29,7 +29,7 @@ public abstract class HangingSignMixin {
       SpriteId sprite,
       CallbackInfo ci
    ) {
-      submitNodeCollector.submitModel(model, Unit.INSTANCE, poseStack, lightCoords, OverlayTexture.NO_OVERLAY, -1, sprite, sprites, 0, null);
+      submitNodeCollector.submitModel(model, Unit.INSTANCE, poseStack, lightCoords, OverlayTexture.NO_OVERLAY, -1, sprite, sprites, 0);
       ci.cancel();
    }
 }

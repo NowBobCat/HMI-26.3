@@ -16,7 +16,6 @@ import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.client.renderer.feature.ItemFeatureRenderer;
 import net.minecraft.client.renderer.item.ItemStackRenderState.FoilType;
-import net.minecraft.client.renderer.rendertype.OutputTarget;
 import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.client.renderer.texture.OverlayTexture;
@@ -194,10 +193,9 @@ public abstract class ItemRendererMixin {
       int index = 0;
       for (BakedQuad quad : submit.quads()) {
          RenderType renderType = quad.materialInfo().itemRenderType();
-         // replicates ItemFeatureRenderer.getFoilBuffer / useTransparentGlint
-         boolean transparent = Minecraft.getInstance().gameRenderer.gameRenderState().useShaderTransparency()
-            && renderType.outputTarget() == OutputTarget.ITEM_ENTITY_TARGET;
-         VertexConsumer foilBuffer = this.hmi$vertexBuilder(transparent ? RenderTypes.glintTranslucent() : RenderTypes.glint());
+         // 26.3: MaterialInfo now precomputes the correct glint render type itself,
+         // so the manual useShaderTransparency()/OutputTarget check is gone.
+         VertexConsumer foilBuffer = this.hmi$vertexBuilder(quad.materialInfo().itemGlintRenderType());
          if (foilDecalPose != null) {
             foilBuffer = new SheetedDecalTextureGenerator(foilBuffer, foilDecalPose, 0.0078125F);
          }
