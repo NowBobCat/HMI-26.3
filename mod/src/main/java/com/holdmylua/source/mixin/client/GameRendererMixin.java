@@ -1,7 +1,6 @@
 package com.holdmylua.source.mixin.client;
 
 import com.holdmylua.source.LuaTestHMI;
-import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GameRenderer;
 import org.spongepowered.asm.mixin.Mixin;
@@ -15,7 +14,7 @@ public class GameRendererMixin {
       method = {"render"},
       at = {@At("HEAD")}
    )
-   private void deltaTime(DeltaTracker tickCounter, boolean tick, CallbackInfo ci) {
+   private void deltaTime(CallbackInfo ci) {
       float currentTime = System.nanoTime() / 1_000_000_000.0f;
       LuaTestHMI.deltaTime = currentTime - LuaTestHMI.prevTime;
       LuaTestHMI.prevTime = currentTime;

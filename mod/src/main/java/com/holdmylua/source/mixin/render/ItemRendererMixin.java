@@ -75,26 +75,27 @@ public abstract class ItemRendererMixin {
          && minecraft.getEntityRenderDispatcher().options.getCameraType().isFirstPerson();
    }
 
+   // 26.3: prepareSubmit(Submit, boolean foil) collapsed into a single-pass
+   // prepareSubmit(Submit) - vanilla's own replacement now handles foil
+   // per-quad in one loop instead of a separate second call. We fold the old
+   // two-pass sequence (main/outline, then always-run foil) into one
+   // injection, preserving that foil used to run after either branch.
    @Inject(method = "prepareSubmit", at = @At("HEAD"), cancellable = true)
-   private void hmi$prepareSubmit(ItemFeatureRenderer.Submit submit, boolean foil, CallbackInfo ci) {
+   private void hmi$prepareSubmit(ItemFeatureRenderer.Submit submit, CallbackInfo ci) {
       if (!hmi$isHandContext(submit)) {
          return;
       }
 
-      if (foil) {
-         // pass 2: foil quads only — the scripts already ran in pass 1
-         hmi$renderFoil(submit);
-         GlobalsStorage.modelPartAnimator.clear();
+      this.hmi$currentItem = DispatcherStorage.getRenderedItem();
+      hmi$runScripts();
+      if (submit.outlineColor() != 0) {
+         hmi$renderOutline(submit);
       } else {
-         // pass 1: run the Lua model scripts once, then the main/outline quad loop
-         this.hmi$currentItem = DispatcherStorage.getRenderedItem();
-         hmi$runScripts();
-         if (submit.outlineColor() != 0) {
-            hmi$renderOutline(submit);
-         } else {
-            hmi$renderMain(submit);
-         }
+         hmi$renderMain(submit);
       }
+
+      hmi$renderFoil(submit);
+      GlobalsStorage.modelPartAnimator.clear();
       ci.cancel();
    }
 
