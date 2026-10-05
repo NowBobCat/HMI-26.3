@@ -20,6 +20,10 @@ import javax.script.ScriptException;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.client.renderer.FirstPersonHandsAndItemsRenderer;
+import net.minecraft.client.renderer.item.ItemStackRenderState;
+import net.minecraft.client.renderer.state.level.FirstPersonHandsAndItemsRenderState;
+import net.minecraft.client.renderer.state.level.PlayerRenderState;
+import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.blockentity.state.BellRenderState;
@@ -32,7 +36,6 @@ import net.minecraft.tags.ItemTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.HumanoidArm;
-import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.item.CrossbowItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemDisplayContext;
@@ -74,10 +77,6 @@ public abstract class HeldItemRendererMixin {
    @Shadow
    @Final
    private Minecraft minecraft;
-   @Shadow
-   private ItemStack mainHandItem;
-   @Shadow
-   private ItemStack offHandItem;
    @Unique
    private boolean swingMHand = false;
    @Unique
@@ -87,28 +86,41 @@ public abstract class HeldItemRendererMixin {
    @Unique
    private float offHandSwingProgress = 0.0F;
 
+   // 26.3: renderPlayerArm, renderMap and submitArmWithItem all became private
+   // methods on FirstPersonHandsAndItemsRenderer (previously protected on
+   // ItemInHandRenderer), and private target methods can't be declared
+   // abstract in Java - so shadowed private methods need a (discarded) body
+   // instead. submitArmWithItem itself has no @Shadow at all: it's never
+   // called directly here, only targeted by descriptor string in the
+   // @Redirect below.
    @Shadow
-   protected abstract void renderPlayerArm(PoseStack var1, SubmitNodeCollector var2, int var3, float var4, float var5, HumanoidArm var6);
+   private void renderPlayerArm(
+      PoseStack poseStack, SubmitNodeCollector submitNodeCollector, int lightCoords, float inverseArmHeight, float attackValue, HumanoidArm arm, PlayerRenderState playerState
+   ) {
+      throw new UnsupportedOperationException();
+   }
 
    @Shadow
-   protected abstract void submitArmWithItem(
-      AbstractClientPlayer var1,
-      float var2,
-      float var3,
-      InteractionHand var4,
-      float var5,
-      ItemStack var6,
-      float var7,
-      PoseStack var8,
-      SubmitNodeCollector var9,
-      int var10
-   );
+   private void renderMap(
+      PoseStack poseStack, SubmitNodeCollector submitNodeCollector, int lightCoords, ItemStack itemStack, boolean mainHand, FirstPersonHandsAndItemsRenderState state
+   ) {
+      throw new UnsupportedOperationException();
+   }
 
-   @Shadow
-   protected abstract void renderMap(PoseStack var1, SubmitNodeCollector var2, int var3, ItemStack var4);
-
-   @Shadow
-   public abstract void renderItem(LivingEntity var1, ItemStack var2, ItemDisplayContext var3, PoseStack var4, SubmitNodeCollector var5, int var6);
+   // 26.3: there is no renderItem(...) method left on this class at all -
+   // item rendering now happens by building an ItemStackRenderState via
+   // Minecraft's ItemModelResolver and calling .submit(...) on it. This
+   // @Unique helper replaces every old this.submitItemStack(...) call site.
+   @Unique
+   private void submitItemStack(
+      AbstractClientPlayer player, ItemStack renderStack, ItemDisplayContext displayContext, PoseStack matrices, SubmitNodeCollector queue, int light
+   ) {
+      ItemStackRenderState scratch = new ItemStackRenderState();
+      this.minecraft
+         .getItemModelResolver()
+         .updateForTopItem(scratch, renderStack, displayContext, this.minecraft.level, player, player.getId() + displayContext.ordinal());
+      scratch.submit(matrices, queue, light, OverlayTexture.NO_OVERLAY, 0);
+   }
 
    @Unique
    private void copyAppearanceComponents(ItemStack source, ItemStack target) {
@@ -373,15 +385,18 @@ public abstract class HeldItemRendererMixin {
    }
 
    @Redirect(
-      method = {"submitHandsWithItems(FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;Lnet/minecraft/client/player/LocalPlayer;I)V"},
+      method = {
+         "submitHandsWithItems(FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;Lnet/minecraft/client/renderer/state/level/PlayerRenderState;Lnet/minecraft/client/renderer/state/level/FirstPersonHandsAndItemsRenderState;)V"
+      },
       at = @At(
          value = "INVOKE",
-         target = "Lnet/minecraft/client/renderer/FirstPersonHandsAndItemsRenderer;submitArmWithItem(Lnet/minecraft/client/player/AbstractClientPlayer;FFLnet/minecraft/world/InteractionHand;FLnet/minecraft/world/item/ItemStack;FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;I)V"
+         target = "Lnet/minecraft/client/renderer/FirstPersonHandsAndItemsRenderer;submitArmWithItem(Lnet/minecraft/client/renderer/state/level/PlayerRenderState;Lnet/minecraft/client/renderer/state/level/FirstPersonHandsAndItemsRenderState;FFLnet/minecraft/world/InteractionHand;FLnet/minecraft/world/item/ItemStack;FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;I)V"
       )
    )
    private void renderOverhaul(
       FirstPersonHandsAndItemsRenderer instance,
-      AbstractClientPlayer player,
+      PlayerRenderState playerState,
+      FirstPersonHandsAndItemsRenderState state,
       float tickProgress,
       float pitch,
       InteractionHand hand,
@@ -392,7 +407,12 @@ public abstract class HeldItemRendererMixin {
       SubmitNodeCollector orderedRenderCommandQueue,
       int light
    ) throws ScriptException, NoSuchMethodException {
-      if (!player.isScoping()) {
+      // 26.3: submitArmWithItem no longer receives the player directly - it
+      // works off PlayerRenderState/FirstPersonHandsAndItemsRenderState
+      // instead. This whole render path is always the local client's own
+      // first-person hands, so Minecraft.player is the correct, safe source.
+      AbstractClientPlayer player = this.minecraft.player;
+      if (player != null && !player.isScoping()) {
          ((ItemStackAccessor)(Object)item).hMI5_0$setTransform(-1);
          boolean bl = hand == InteractionHand.MAIN_HAND;
          boolean interact = false;
@@ -490,7 +510,7 @@ public abstract class HeldItemRendererMixin {
          if (player.isInvisible()) {
             this.applyArmMatrices(matrices, combinedLight, 0.0F, 0.0F, arm);
          } else {
-            this.renderPlayerArm(matrices, orderedRenderCommandQueue, combinedLight, 0.0F, 0.0F, arm);
+            this.renderPlayerArm(matrices, orderedRenderCommandQueue, combinedLight, 0.0F, 0.0F, arm, playerState);
          }
 
          matrices.popPose();
@@ -558,12 +578,12 @@ public abstract class HeldItemRendererMixin {
             matrices.translate(-0.9 * l, -0.45, -0.7);
             if (item.is(Items.BELL)) {
                BellBlockEntity bellBlockEntity = new BellBlockEntity(BlockPos.ZERO, Blocks.BELL.defaultBlockState());
-               BellRenderState state = new BellRenderState();
-               state.lightCoords = light;
+               BellRenderState bellRenderState = new BellRenderState();
+               bellRenderState.lightCoords = light;
                this.minecraft
                   .getBlockEntityRenderDispatcher()
                   .getRenderer(bellBlockEntity)
-                  .submit(state, matrices, orderedRenderCommandQueue, new CameraRenderState());
+                  .submit(bellRenderState, matrices, orderedRenderCommandQueue, new CameraRenderState());
                ((AlternateBlockRenderer)(Object)this.minecraft.getModelManager().getBlockStateModelSet())
                   .renderSingleBlockWithEmission(
                      (BlockState)Blocks.BELL.defaultBlockState().setValue(BlockStateProperties.BELL_ATTACHMENT, BellAttachType.CEILING),
@@ -654,7 +674,7 @@ public abstract class HeldItemRendererMixin {
                matrices.pushPose();
                matrices.translate(-0.05 * l, 0.2, 0.1);
                matrices.rotateDegrees(Axis.YP, -12 * l);
-               this.renderMap(matrices, orderedRenderCommandQueue, light, item);
+               this.renderMap(matrices, orderedRenderCommandQueue, light, item, bl, state);
                matrices.popPose();
             } else {
                ItemStack renderStack = bl ? GlobalsStorage.mainHandItem : GlobalsStorage.offHandItem;
@@ -684,7 +704,7 @@ public abstract class HeldItemRendererMixin {
                   ),
                   item
                );
-               this.renderItem(
+               this.submitItemStack(
                   player,
                   renderStack,
                   bl2 ? ItemDisplayContext.THIRD_PERSON_RIGHT_HAND : ItemDisplayContext.THIRD_PERSON_LEFT_HAND,
@@ -752,7 +772,7 @@ public abstract class HeldItemRendererMixin {
                ),
                item
             );
-            this.renderItem(
+            this.submitItemStack(
                player,
                renderStack,
                bl2 ? ItemDisplayContext.THIRD_PERSON_RIGHT_HAND : ItemDisplayContext.THIRD_PERSON_LEFT_HAND,
