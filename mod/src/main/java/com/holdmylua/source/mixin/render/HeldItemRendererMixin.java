@@ -46,6 +46,7 @@ import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.component.CustomModelData;
 import net.minecraft.world.item.enchantment.ItemEnchantments;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.AbstractChestBlock;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LanternBlock;
 import net.minecraft.world.level.block.entity.BellBlockEntity;
@@ -111,15 +112,30 @@ public abstract class HeldItemRendererMixin {
    // item rendering now happens by building an ItemStackRenderState via
    // Minecraft's ItemModelResolver and calling .submit(...) on it. This
    // @Unique helper replaces every old this.submitItemStack(...) call site.
+   //
+   // Reuse ONE persistent scratch instance across calls instead of allocating
+   // a new ItemStackRenderState every frame (vanilla's own FirstPersonHandsAndItems
+   // does the same - a persistent field cleared and repopulated each frame,
+   // never a fresh allocation). ItemStackRenderState.submit() copies out every
+   // value (quads by immutable reference, tints via a freshly-built array,
+   // foilType by value) into the collector before returning, so reusing this
+   // single field across the main-hand and off-hand calls within the same
+   // frame is safe - nothing downstream still needs the old data once clear()
+   // runs for the next hand.
+   @Unique
+   private final ItemStackRenderState hmi$itemRenderStateScratch = new ItemStackRenderState();
+
    @Unique
    private void submitItemStack(
       AbstractClientPlayer player, ItemStack renderStack, ItemDisplayContext displayContext, PoseStack matrices, SubmitNodeCollector queue, int light
    ) {
-      ItemStackRenderState scratch = new ItemStackRenderState();
+      this.hmi$itemRenderStateScratch.clear();
       this.minecraft
          .getItemModelResolver()
-         .updateForTopItem(scratch, renderStack, displayContext, this.minecraft.level, player, player.getId() + displayContext.ordinal());
-      scratch.submit(matrices, queue, light, OverlayTexture.NO_OVERLAY, 0);
+         .updateForTopItem(
+            this.hmi$itemRenderStateScratch, renderStack, displayContext, this.minecraft.level, player, player.getId() + displayContext.ordinal()
+         );
+      this.hmi$itemRenderStateScratch.submit(matrices, queue, light, OverlayTexture.NO_OVERLAY, 0);
    }
 
    @Unique
@@ -522,6 +538,14 @@ public abstract class HeldItemRendererMixin {
             && !item.is(Items.REDSTONE)
             && !item.is(ItemTags.BANNERS)
             && !item.is(ItemTags.SKULLS)
+            // 26.3: all chest variants (normal, trapped, copper, weathering copper,
+            // ender) now have a proper vanilla ChestSpecialRenderer, same mechanism
+            // as banners/skulls above - they render correctly through the normal
+            // item path and shouldn't go through the static block-model path at all
+            // (which is why they were invisible/misplaced: chests have no real
+            // baked block model, their visuals only exist via the block entity
+            // renderer or - now - the item special renderer).
+            && !(Block.byItem(item.getItem()) instanceof AbstractChestBlock)
             && GlobalsStorage.renderAsBlock.getOrDefault(item.getItem().toString(), true)) {
             swingProgress = 0.0F;
             BlockState blockState = Block.byItem(item.getItem()).defaultBlockState();

@@ -7,6 +7,7 @@ import net.minecraft.client.multiplayer.MultiPlayerGameMode;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.item.component.SwingAnimation;
 import net.minecraft.world.phys.HitResult;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
@@ -14,10 +15,7 @@ import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin({Minecraft.class})
 public class MinecraftClientMixin {
@@ -42,33 +40,51 @@ public class MinecraftClientMixin {
    @Final
    private static Logger LOGGER;
 
-   // 26.3: swing()'s signature/owner changed internally, but startAttack()Z itself
-   // didn't, and this injection never needed anything from the old call site -
-   // so we just fire at HEAD instead of chasing the new internal invoke target.
-   @Inject(
+   // 26.3: startAttack()Z can return early (attack cooldown via missTime,
+   // spectator mode, disabled item, cannotAttackWithItem, etc.) well before
+   // ever reaching player.swing(...) - and it's called every tick while
+   // attack is held, not just once. A HEAD injection reset swing state on
+   // every one of those calls even when no real swing happened, causing the
+   // animation to restart continuously. Redirecting the actual swing() call
+   // (as the original mod did pre-26.3) means our reset only fires when
+   // vanilla itself decides to swing.
+   @Redirect(
       method = {"startAttack"},
-      at = {@At("HEAD")}
+      at = @At(
+         value = "INVOKE",
+         target = "Lnet/minecraft/client/player/LocalPlayer;swing(Lnet/minecraft/world/InteractionHand;Lnet/minecraft/world/item/component/SwingAnimation;Z)Z"
+      )
    )
-   public void doAttackMix(CallbackInfoReturnable<Boolean> cir) {
-      if (this.player instanceof LivingEntityAccessor mixin) {
+   public boolean doAttackMix(LocalPlayer instance, InteractionHand hand, SwingAnimation animation, boolean broadcast) {
+      if (instance instanceof LivingEntityAccessor mixin) {
          mixin.hMI5_0$resetMainHandSwing(false);
       }
+
+      return instance.swing(hand, animation, broadcast);
    }
 
-   // TODO 26.3: startUseItem()V no longer exposes which hand at a clean HEAD
-   // injection point - that's decided partway through its body now (old code
-   // redirected LocalPlayer.swing(InteractionHand), which no longer exists in
-   // that 1-arg form). Approximating by resetting both hands here so this
-   // compiles and runs; revisit with the real decompiled startUseItem() body
-   // (gradlew genSources) to restore the original hand-specific behavior.
-   @Inject(
+   // 26.3: same issue as startAttack() above - startUseItem()V can return
+   // early in several places (busy hands, disabled item, failed/passed
+   // interactions) without ever calling swing(), and runs every tick while
+   // the use button is held. All three real swing() call sites inside
+   // startUseItem share this exact descriptor, so one @Redirect catches all
+   // of them automatically.
+   @Redirect(
       method = {"startUseItem"},
-      at = @At("HEAD")
+      at = @At(
+         value = "INVOKE",
+         target = "Lnet/minecraft/client/player/LocalPlayer;swing(Lnet/minecraft/world/InteractionHand;Lnet/minecraft/world/item/component/SwingAnimation;Z)Z"
+      )
    )
-   private void doItemUse(CallbackInfo ci) {
-      if (this.player instanceof LivingEntityAccessor accessor) {
-         accessor.hMI5_0$resetMainHandSwing(true);
-         accessor.hMI5_0$resetOffHandSwing(true);
+   private boolean doItemUse(LocalPlayer instance, InteractionHand hand, SwingAnimation animation, boolean broadcast) {
+      if (instance instanceof LivingEntityAccessor accessor) {
+         if (hand == InteractionHand.MAIN_HAND) {
+            accessor.hMI5_0$resetMainHandSwing(true);
+         } else {
+            accessor.hMI5_0$resetOffHandSwing(true);
+         }
       }
+
+      return instance.swing(hand, animation, broadcast);
    }
 }
